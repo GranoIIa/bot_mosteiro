@@ -3,6 +3,7 @@ from collections import deque
 from dataclasses import dataclass
 import json
 import os
+import platform
 import shutil
 from typing import Dict, Optional
 import urllib.parse
@@ -142,6 +143,16 @@ class Music(commands.Cog):
         return True
 
     async def _ensure_voice(self, ctx: commands.Context) -> Optional[discord.VoiceClient]:
+        if not discord.opus.is_loaded() and os.name == "posix":
+            machine = platform.machine().lower()
+            arch_folder = "aarch64" if machine in ("aarch64", "arm64") else "x86_64"
+            bundled = os.path.join(os.path.dirname(os.path.dirname(__file__)), "lib", arch_folder, "libopus.so.0")
+            if os.path.isfile(bundled):
+                try:
+                    discord.opus.load_opus(bundled)
+                except Exception:
+                    pass
+
         if not ctx.author.voice or not ctx.author.voice.channel:
             await ctx.send("❌ Você precisa estar conectado a um canal de voz.")
             return None

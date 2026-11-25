@@ -1,4 +1,5 @@
 import os
+import platform
 import sys
 import ctypes.util
 import discord
@@ -12,13 +13,20 @@ if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
 # Carrega libopus (necessário para áudio de voz)
 def _load_opus():
     if discord.opus.is_loaded():
         return True
 
-    # Tenta caminhos conhecidos
+    machine = platform.machine().lower()
+    arch_folder = "aarch64" if machine in ("aarch64", "arm64") else "x86_64"
+    bundled_opus = os.path.join(BASE_DIR, "lib", arch_folder, "libopus.so.0")
+
     _opus_candidates = [
+        bundled_opus if sys.platform == "linux" else None,
         ctypes.util.find_library("opus"),
         "libopus.so.0",
         "libopus.so",
@@ -34,32 +42,17 @@ def _load_opus():
             discord.opus.load_opus(_lib)
             print(f"🔊 Opus carregado: {_lib}")
             return True
-        except Exception:
+        except Exception as e:
+            if _lib == bundled_opus:
+                print(f"⚠️ Falha ao carregar opus embutido ({_lib}): {e}")
             continue
-
-    # Fallback: tenta instalar via apt-get e recarregar
-    if sys.platform == "linux":
-        import subprocess
-        for pkg in ["libopus0", "libopus-dev", "opus-tools"]:
-            try:
-                subprocess.run(["apt-get", "install", "-y", "-qq", pkg], capture_output=True, timeout=30)
-            except Exception:
-                pass
-        # Tenta carregar de novo após instalar
-        for _lib in filter(None, _opus_candidates):
-            try:
-                discord.opus.load_opus(_lib)
-                print(f"🔊 Opus carregado (pós-install): {_lib}")
-                return True
-            except Exception:
-                continue
 
     print("⚠️ AVISO: libopus não encontrada. Comandos de voz/música não funcionarão.")
     return False
 
+
 _load_opus()
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 _raw_token = os.getenv("DISCORD_TOKEN") or os.getenv("TOKEN")
 TOKEN = _raw_token.strip().strip('"').strip("'") if _raw_token else None
