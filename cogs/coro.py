@@ -32,7 +32,7 @@ YTDL_OPTIONS = {
     "quiet": True,
     "no_warnings": True,
     "no_color": True,
-    "default_search": "scsearch",
+    "default_search": "scsearch5",
     "socket_timeout": 10,
     "source_address": "0.0.0.0",
 }
@@ -43,9 +43,9 @@ FFMPEG_STREAM_OPTIONS = {
 }
 
 AMBIENCE_PRESETS = {
-    "gregoriano": "scsearch:gregorian chant",
-    "mosteiro_chuva": "scsearch:rain monastery",
-    "scriptorium": "scsearch:medieval lute",
+    "gregoriano": "scsearch5:gregorian chant",
+    "mosteiro_chuva": "scsearch5:rain monastery",
+    "scriptorium": "scsearch5:medieval lute music",
 }
 
 
@@ -88,12 +88,21 @@ def _extract_track(query: str, requester: str) -> Track:
         opts["cookiefile"] = COOKIES_FILE
 
     def _run_ydl(target_query: str) -> Track:
-        with yt_dlp.YoutubeDL(opts) as ydl:
+        is_direct_url = target_query.startswith(("http://", "https://"))
+        run_opts = dict(opts)
+        if not is_direct_url:
+            run_opts["ignoreerrors"] = True
+            if target_query.startswith("scsearch:"):
+                target_query = "scsearch5:" + target_query[len("scsearch:"):]
+
+        with yt_dlp.YoutubeDL(run_opts) as ydl:
             info = ydl.extract_info(target_query, download=False)
+            if not info:
+                raise ValueError("Nenhum resultado reproduzível encontrado.")
             if "entries" in info:
-                entries = [e for e in info["entries"] if e]
+                entries = [e for e in info["entries"] if e and e.get("url")]
                 if not entries:
-                    raise ValueError("Nenhum resultado encontrado.")
+                    raise ValueError("Nenhum resultado reproduzível encontrado (faixas bloqueadas ou com DRM).")
                 info = entries[0]
             url = info["url"]
             protocol = info.get("protocol", "")
@@ -253,7 +262,14 @@ class Music(commands.Cog):
             await ctx.send(f"❌ Não foi possível tocar o áudio: `{type(e).__name__}: {e}`")
 
     @commands.hybrid_command(name="ambiente", description="Inicia uma ambientação medieval/gregoriana em loop contínuo.")
-    @app_commands.describe(preset="Escolha: gregoriano, mosteiro_chuva ou scriptorium")
+    @app_commands.describe(preset="Escolha a ambientação do mosteiro")
+    @app_commands.choices(
+        preset=[
+            app_commands.Choice(name="Canto Gregoriano", value="gregoriano"),
+            app_commands.Choice(name="Chuva no Mosteiro", value="mosteiro_chuva"),
+            app_commands.Choice(name="Scriptorium & Alaúde Medieval", value="scriptorium"),
+        ]
+    )
     async def ambiente(self, ctx: commands.Context, preset: str = "gregoriano"):
         if not await self._check_music_channel(ctx):
             return
