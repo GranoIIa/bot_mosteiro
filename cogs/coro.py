@@ -14,11 +14,14 @@ from database.connection import db
 FFMPEG_EXE = imageio_ffmpeg.get_ffmpeg_exe()
 AUDIO_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "audio")
 
+COOKIES_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "cookies.txt")
+
 YTDL_OPTIONS = {
     "format": "bestaudio/best",
     "noplaylist": True,
     "quiet": True,
     "no_warnings": True,
+    "no_color": True,
     "default_search": "ytsearch",
     "source_address": "0.0.0.0",
 }
@@ -58,20 +61,34 @@ def _extract_track(query: str, requester: str) -> Track:
     if os.path.isfile(local_path):
         return Track(title=os.path.basename(local_path), source=local_path, is_local=True, requester=requester)
 
-    with yt_dlp.YoutubeDL(YTDL_OPTIONS) as ydl:
-        info = ydl.extract_info(query, download=False)
-        if "entries" in info:
-            entries = [e for e in info["entries"] if e]
-            if not entries:
-                raise ValueError("Nenhum resultado encontrado.")
-            info = entries[0]
-        return Track(
-            title=info.get("title", "Faixa sem título"),
-            source=info["url"],
-            webpage_url=info.get("webpage_url"),
-            is_local=False,
-            requester=requester,
-        )
+    opts = dict(YTDL_OPTIONS)
+    if os.path.isfile(COOKIES_FILE):
+        opts["cookiefile"] = COOKIES_FILE
+
+    def _run_ydl(target_query: str) -> Track:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(target_query, download=False)
+            if "entries" in info:
+                entries = [e for e in info["entries"] if e]
+                if not entries:
+                    raise ValueError("Nenhum resultado encontrado.")
+                info = entries[0]
+            return Track(
+                title=info.get("title", "Faixa sem título"),
+                source=info["url"],
+                webpage_url=info.get("webpage_url"),
+                is_local=False,
+                requester=requester,
+            )
+
+    try:
+        return _run_ydl(query)
+    except Exception as exc:
+        is_url = query.startswith(("http://", "https://"))
+        if not is_url and ("Sign in to confirm" in str(exc) or "bot" in str(exc).lower()):
+            # Datacenters (ex.: Discloud) costumam receber bloqueio do YouTube; faz fallback para SoundCloud
+            return _run_ydl(f"scsearch:{query}")
+        raise
 
 
 class Music(commands.Cog):
