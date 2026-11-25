@@ -1,8 +1,11 @@
 import asyncio
 from collections import deque
 from dataclasses import dataclass
+import json
 import os
 from typing import Dict, Optional
+import urllib.parse
+import urllib.request
 import discord
 from discord import app_commands
 from discord.app_commands import Choice
@@ -56,6 +59,16 @@ class GuildMusicState:
         self.lock = asyncio.Lock()
 
 
+def _fetch_youtube_title(url: str) -> Optional[str]:
+    try:
+        oembed = "https://www.youtube.com/oembed?url=" + urllib.parse.quote(url, safe="") + "&format=json"
+        with urllib.request.urlopen(oembed, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            return data.get("title")
+    except Exception:
+        return None
+
+
 def _extract_track(query: str, requester: str) -> Track:
     local_path = os.path.join(AUDIO_DIR, query)
     if os.path.isfile(local_path):
@@ -84,16 +97,27 @@ def _extract_track(query: str, requester: str) -> Track:
     try:
         return _run_ydl(query)
     except Exception as exc:
-        is_url = query.startswith(("http://", "https://", "scsearch:", "ytsearch:"))
-        if not is_url and ("Sign in to confirm" in str(exc) or "bot" in str(exc).lower() or "Nenhum resultado" in str(exc)):
-            # Datacenters (ex.: Discloud) costumam receber bloqueio do YouTube; faz fallback para SoundCloud
-            try:
-                return _run_ydl(f"scsearch:{query}")
-            except Exception:
-                short_q = " ".join(query.split()[:2])
-                if short_q and short_q != query:
-                    return _run_ydl(f"scsearch:{short_q}")
-        raise
+        err_str = str(exc)
+        is_bot_block = "Sign in to confirm" in err_str or "bot" in err_str.lower() or "Nenhum resultado" in err_str
+        if not is_bot_block:
+            raise
+
+        search_term = query
+        if query.startswith(("http://", "https://")) and ("youtube.com" in query or "youtu.be" in query):
+            yt_title = _fetch_youtube_title(query)
+            if not yt_title:
+                raise
+            search_term = yt_title
+        elif query.startswith(("http://", "https://", "scsearch:", "ytsearch:")):
+            raise
+
+        try:
+            return _run_ydl(f"scsearch:{search_term}")
+        except Exception:
+            short_q = " ".join(search_term.split()[:3])
+            if short_q and short_q != search_term:
+                return _run_ydl(f"scsearch:{short_q}")
+            raise
 
 
 class Music(commands.Cog):
