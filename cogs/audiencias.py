@@ -9,11 +9,47 @@ from database.connection import db
 from utils.permissions import is_admin_or_owner
 
 TICKET_TYPES = {
-    "abade": {"label": "Audiência com o Abade", "emoji": "👑", "prefix": "abade", "desc": "Assuntos diretos com o Abade."},
-    "denuncia": {"label": "Denúncia", "emoji": "⚖️", "prefix": "denuncia", "desc": "Relatar infrações ou condutas graves."},
-    "peticao": {"label": "Petição", "emoji": "📜", "prefix": "peticao", "desc": "Solicitações formais ao Conselho."},
-    "privado": {"label": "Atendimento Privado", "emoji": "🕯️", "prefix": "privado", "desc": "Dúvidas ou suporte reservado."},
+    "abade": {"label": "Audiência com o Abade", "category_name": "👑 Audiências com o Abade", "emoji": "👑", "prefix": "abade", "desc": "Assuntos diretos com o Abade."},
+    "denuncia": {"label": "Denúncia", "category_name": "⚖️ Denúncias", "emoji": "⚖️", "prefix": "denuncia", "desc": "Relatar infrações ou condutas graves."},
+    "peticao": {"label": "Petição", "category_name": "📜 Petições", "emoji": "📜", "prefix": "peticao", "desc": "Solicitações formais ao Conselho."},
+    "privado": {"label": "Atendimento Privado", "category_name": "🕯️ Atendimentos Privados", "emoji": "🕯️", "prefix": "privado", "desc": "Dúvidas ou suporte reservado."},
 }
+
+
+async def ensure_ticket_categories(guild: discord.Guild) -> dict:
+    """Garante que exista uma categoria no Discord para cada tipo de ticket."""
+    settings = await db.get_guild_settings(guild.id)
+    tcfg = settings["ticket_config"]
+    changed = False
+
+    for key, info in TICKET_TYPES.items():
+        cat_cfg = tcfg["categories"].setdefault(key, {"category_id": None, "role_ids": []})
+        cat_id = cat_cfg.get("category_id")
+        category = guild.get_category(cat_id) if cat_id else None
+
+        if category is None:
+            category = discord.utils.get(guild.categories, name=info["category_name"])
+        if category is None:
+            try:
+                overwrites = {
+                    guild.default_role: discord.PermissionOverwrite(view_channel=False),
+                    guild.me: discord.PermissionOverwrite(view_channel=True, manage_channels=True),
+                }
+                category = await guild.create_category(
+                    name=info["category_name"],
+                    overwrites=overwrites,
+                    reason="Configuração automática das categorias de atendimento",
+                )
+            except discord.Forbidden:
+                continue
+
+        if cat_cfg.get("category_id") != category.id:
+            cat_cfg["category_id"] = category.id
+            changed = True
+
+    if changed:
+        await db.update_guild(guild.id, "ticket_config", tcfg)
+    return tcfg
 
 
 class TicketControlView(discord.ui.View):
@@ -113,8 +149,8 @@ class TicketCategorySelect(discord.ui.Select):
                 )
                 return
 
-        settings = await db.get_guild_settings(interaction.guild_id)
-        cat_cfg = settings.get("ticket_config", {}).get("categories", {}).get(ticket_type, {})
+        tcfg = await ensure_ticket_categories(interaction.guild)
+        cat_cfg = tcfg.get("categories", {}).get(ticket_type, {})
         category = interaction.guild.get_category(cat_cfg.get("category_id")) if cat_cfg.get("category_id") else None
 
         overwrites = {
@@ -190,6 +226,8 @@ class Audiencias(commands.Cog):
     async def on_ready(self):
         self.bot.add_view(TicketPanelView())
         self.bot.add_view(TicketControlView())
+        for guild in self.bot.guilds:
+            await ensure_ticket_categories(guild)
 
     @audiencia_group.command(name="configurar", description="Configura categoria, cargo responsável e canal de logs.")
     @is_admin_or_owner()

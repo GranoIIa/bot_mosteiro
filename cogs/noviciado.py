@@ -252,6 +252,31 @@ class Noviciado(commands.Cog):
     async def on_ready(self):
         self.bot.add_view(RecruitmentPanelView())
         self.bot.add_view(ApplicationReviewView())
+        for guild in self.bot.guilds:
+            settings = await db.get_guild_settings(guild.id)
+            rec_channel_id = settings.get("recruitment_channel")
+            channel = guild.get_channel(rec_channel_id) if rec_channel_id else None
+            if not channel:
+                continue
+            already_posted = False
+            try:
+                async for msg in channel.history(limit=20):
+                    if msg.author.id == self.bot.user.id and msg.embeds and "Recrutamento & Ingresso no Mosteiro" in (msg.embeds[0].title or ""):
+                        already_posted = True
+                        break
+                if not already_posted:
+                    embed = discord.Embed(
+                        title="📜 Recrutamento & Ingresso no Mosteiro",
+                        description=(
+                            "Escolha abaixo o formulário que deseja preencher:\n\n"
+                            "🕯️ **Ingresso no Mosteiro** — Para novos membros que desejam integrar a irmandade.\n"
+                            "✝️ **Recrutamento do Clero** — Para candidatos às funções clericais e de liderança."
+                        ),
+                        color=discord.Color.dark_gold(),
+                    )
+                    await channel.send(embed=embed, view=RecruitmentPanelView())
+            except discord.HTTPException:
+                pass
 
     @recrutamento_group.command(name="configurar", description="Define o canal de avaliação e os cargos entregues na aprovação.")
     @app_commands.describe(

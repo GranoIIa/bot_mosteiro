@@ -9,6 +9,7 @@ from discord.app_commands import Choice
 from discord.ext import commands
 import imageio_ffmpeg
 import yt_dlp
+from database.connection import db
 
 FFMPEG_EXE = imageio_ffmpeg.get_ffmpeg_exe()
 AUDIO_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "audio")
@@ -85,6 +86,18 @@ class Music(commands.Cog):
             self.states[guild_id] = GuildMusicState()
         return self.states[guild_id]
 
+    async def _check_music_channel(self, interaction: discord.Interaction) -> bool:
+        settings = await db.get_guild_settings(interaction.guild_id)
+        music_channel_id = settings.get("music_channel")
+        if music_channel_id and interaction.guild.get_channel(music_channel_id) and interaction.channel_id != music_channel_id:
+            msg = f"🎶 Use os comandos de música apenas no canal <#{music_channel_id}>."
+            if interaction.response.is_done():
+                await interaction.followup.send(msg, ephemeral=True)
+            else:
+                await interaction.response.send_message(msg, ephemeral=True)
+            return False
+        return True
+
     async def _ensure_voice(self, interaction: discord.Interaction) -> Optional[discord.VoiceClient]:
         if not interaction.user.voice or not interaction.user.voice.channel:
             msg = "❌ Você precisa estar conectado a um canal de voz."
@@ -143,6 +156,8 @@ class Music(commands.Cog):
     @app_commands.command(name="play", description="Toca uma música, canto gregoriano ou ambientação (busca, URL ou arquivo local).")
     @app_commands.describe(busca="Nome da música, link do YouTube/stream ou nome do arquivo em assets/audio")
     async def play(self, interaction: discord.Interaction, busca: str):
+        if not await self._check_music_channel(interaction):
+            return
         await interaction.response.defer(thinking=True)
         vc = await self._ensure_voice(interaction)
         if not vc:
@@ -173,6 +188,8 @@ class Music(commands.Cog):
     )
     @app_commands.describe(preset="Escolha o clima sonoro do Mosteiro")
     async def ambiente(self, interaction: discord.Interaction, preset: Choice[str]):
+        if not await self._check_music_channel(interaction):
+            return
         await interaction.response.defer(thinking=True)
         vc = await self._ensure_voice(interaction)
         if not vc:
@@ -197,6 +214,8 @@ class Music(commands.Cog):
 
     @app_commands.command(name="pause", description="Pausa a reprodução atual.")
     async def pause(self, interaction: discord.Interaction):
+        if not await self._check_music_channel(interaction):
+            return
         vc = interaction.guild.voice_client
         if vc and vc.is_playing():
             vc.pause()
@@ -206,6 +225,8 @@ class Music(commands.Cog):
 
     @app_commands.command(name="resume", description="Retoma a reprodução pausada.")
     async def resume(self, interaction: discord.Interaction):
+        if not await self._check_music_channel(interaction):
+            return
         vc = interaction.guild.voice_client
         if vc and vc.is_paused():
             vc.resume()
@@ -215,6 +236,8 @@ class Music(commands.Cog):
 
     @app_commands.command(name="skip", description="Pula para a próxima faixa da fila.")
     async def skip(self, interaction: discord.Interaction):
+        if not await self._check_music_channel(interaction):
+            return
         vc = interaction.guild.voice_client
         if not vc or (not vc.is_playing() and not vc.is_paused()):
             await interaction.response.send_message("❌ Nada está tocando no momento.", ephemeral=True)
@@ -228,6 +251,8 @@ class Music(commands.Cog):
 
     @app_commands.command(name="stop", description="Para a música, limpa a fila e desconecta do canal de voz.")
     async def stop(self, interaction: discord.Interaction):
+        if not await self._check_music_channel(interaction):
+            return
         state = self._get_state(interaction.guild_id)
         state.loop = False
         state.current = None
@@ -242,6 +267,8 @@ class Music(commands.Cog):
 
     @app_commands.command(name="queue", description="Exibe a faixa atual e a fila de reprodução.")
     async def queue(self, interaction: discord.Interaction):
+        if not await self._check_music_channel(interaction):
+            return
         state = self._get_state(interaction.guild_id)
         if not state.current and not state.queue:
             await interaction.response.send_message("📭 A fila está vazia.", ephemeral=True)
@@ -260,6 +287,8 @@ class Music(commands.Cog):
     @app_commands.command(name="volume", description="Ajusta o volume do player (0 a 100).")
     @app_commands.describe(nivel="Volume de 0 a 100")
     async def volume(self, interaction: discord.Interaction, nivel: app_commands.Range[int, 0, 100]):
+        if not await self._check_music_channel(interaction):
+            return
         state = self._get_state(interaction.guild_id)
         state.volume = nivel / 100.0
         vc = interaction.guild.voice_client
@@ -269,6 +298,8 @@ class Music(commands.Cog):
 
     @app_commands.command(name="loop", description="Ativa ou desativa a repetição contínua da faixa atual.")
     async def loop(self, interaction: discord.Interaction):
+        if not await self._check_music_channel(interaction):
+            return
         state = self._get_state(interaction.guild_id)
         state.loop = not state.loop
         status = "ativado 🔁" if state.loop else "desativado"
