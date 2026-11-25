@@ -32,9 +32,9 @@ FFMPEG_STREAM_OPTIONS = {
 }
 
 AMBIENCE_PRESETS = {
-    "gregoriano": "Gregorian Chants 1 hour monastery ambience",
-    "mosteiro_chuva": "Medieval Monastery rain ambience 1 hour",
-    "scriptorium": "Medieval ambient music lute harp monastery",
+    "gregoriano": "scsearch:gregorian chant",
+    "mosteiro_chuva": "scsearch:rain monastery",
+    "scriptorium": "scsearch:medieval lute",
 }
 
 
@@ -84,10 +84,15 @@ def _extract_track(query: str, requester: str) -> Track:
     try:
         return _run_ydl(query)
     except Exception as exc:
-        is_url = query.startswith(("http://", "https://"))
-        if not is_url and ("Sign in to confirm" in str(exc) or "bot" in str(exc).lower()):
+        is_url = query.startswith(("http://", "https://", "scsearch:", "ytsearch:"))
+        if not is_url and ("Sign in to confirm" in str(exc) or "bot" in str(exc).lower() or "Nenhum resultado" in str(exc)):
             # Datacenters (ex.: Discloud) costumam receber bloqueio do YouTube; faz fallback para SoundCloud
-            return _run_ydl(f"scsearch:{query}")
+            try:
+                return _run_ydl(f"scsearch:{query}")
+            except Exception:
+                short_q = " ".join(query.split()[:2])
+                if short_q and short_q != query:
+                    return _run_ydl(f"scsearch:{short_q}")
         raise
 
 
