@@ -1,8 +1,10 @@
 import os
 import sys
 import discord
+from discord import app_commands
 from discord.ext import commands
 from dotenv import load_dotenv
+from utils.permissions import OWNER_IDS
 
 # Configuração de encoding para Windows
 if sys.platform == "win32":
@@ -23,7 +25,7 @@ class MosteiroBot(commands.Bot):
     """Bot unificado do Mosteiro (Cargos, Audiências, Recrutamento e Música)."""
 
     def __init__(self):
-        super().__init__(command_prefix="!", intents=intents)
+        super().__init__(command_prefix="!", intents=intents, owner_ids=OWNER_IDS)
 
     async def setup_hook(self):
         cogs_dir = os.path.join(os.path.dirname(__file__), "cogs")
@@ -47,6 +49,18 @@ class MosteiroBot(commands.Bot):
 
 
 bot = MosteiroBot()
+
+
+@bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, app_commands.MissingPermissions):
+        msg = "❌ Você precisa de permissão de **Administrador** para usar este comando."
+        if interaction.response.is_done():
+            await interaction.followup.send(msg, ephemeral=True)
+        else:
+            await interaction.response.send_message(msg, ephemeral=True)
+        return
+    raise error
 
 
 @bot.command()

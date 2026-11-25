@@ -4,6 +4,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from database.connection import db
+from utils.permissions import AdminGroup
 
 
 class RejectReasonModal(discord.ui.Modal, title="Motivo da Recusa"):
@@ -242,10 +243,9 @@ class Noviciado(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    recrutamento_group = app_commands.Group(
+    recrutamento_group = AdminGroup(
         name="recrutamento",
         description="Configuração e painel de formulários do Mosteiro e Clero",
-        default_permissions=discord.Permissions(administrator=True),
     )
 
     @commands.Cog.listener()

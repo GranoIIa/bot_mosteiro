@@ -4,6 +4,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 from database.connection import db
+from utils.permissions import AdminGroup
 
 
 class Chancelaria(commands.Cog):
@@ -21,10 +22,9 @@ class Chancelaria(commands.Cog):
         if not self.scheduled_loop.is_running():
             self.scheduled_loop.start()
 
-    chancelaria_group = app_commands.Group(
+    chancelaria_group = AdminGroup(
         name="chancelaria",
         description="Mensagens automáticas e avisos periódicos do Mosteiro",
-        default_permissions=discord.Permissions(administrator=True),
     )
 
     @chancelaria_group.command(name="boas_vindas", description="Configura o canal e a mensagem de boas-vindas.")

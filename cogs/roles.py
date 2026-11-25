@@ -4,6 +4,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from database.connection import db
+from utils.permissions import AdminGroup, is_admin_or_owner
 
 
 class CaptchaModal(discord.ui.Modal, title="Verificação do Mosteiro"):
@@ -124,10 +125,9 @@ class Roles(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    cargo_group = app_commands.Group(
+    cargo_group = AdminGroup(
         name="cargo",
         description="Gerenciamento de painéis de auto-cargo",
-        default_permissions=discord.Permissions(administrator=True),
     )
 
     @commands.Cog.listener()
@@ -155,7 +155,7 @@ class Roles(commands.Cog):
 
     @app_commands.command(name="autorole", description="Define o cargo automático ao entrar no servidor.")
     @app_commands.describe(cargo="Cargo inicial (deixe vazio para desativar)")
-    @app_commands.default_permissions(administrator=True)
+    @is_admin_or_owner()
     async def autorole(self, interaction: discord.Interaction, cargo: discord.Role = None):
         if cargo:
             await db.update_guild(interaction.guild_id, "autorole", cargo.id)
@@ -165,7 +165,7 @@ class Roles(commands.Cog):
             await interaction.response.send_message("🔴 Auto-role desativado.", ephemeral=True)
 
     @app_commands.command(name="painel_verificacao", description="Envia o painel de verificação humana com captcha.")
-    @app_commands.default_permissions(administrator=True)
+    @is_admin_or_owner()
     async def painel_verificacao(self, interaction: discord.Interaction):
         embed = discord.Embed(
             title="🛡️ Portões do Mosteiro — Verificação",

@@ -6,6 +6,7 @@ from discord import app_commands
 from discord.app_commands import Choice
 from discord.ext import commands
 from database.connection import db
+from utils.permissions import is_admin_or_owner
 
 TICKET_TYPES = {
     "abade": {"label": "Audiência com o Abade", "emoji": "👑", "prefix": "abade", "desc": "Assuntos diretos com o Abade."},
@@ -191,7 +192,7 @@ class Audiencias(commands.Cog):
         self.bot.add_view(TicketControlView())
 
     @audiencia_group.command(name="configurar", description="Configura categoria, cargo responsável e canal de logs.")
-    @app_commands.default_permissions(administrator=True)
+    @is_admin_or_owner()
     @app_commands.choices(
         tipo=[
             Choice(name="Audiência com o Abade", value="abade"),
@@ -229,7 +230,7 @@ class Audiencias(commands.Cog):
         )
 
     @audiencia_group.command(name="painel", description="Publica o painel de abertura de audiências e tickets.")
-    @app_commands.default_permissions(administrator=True)
+    @is_admin_or_owner()
     async def painel(self, interaction: discord.Interaction):
         embed = discord.Embed(
             title="⚖️ Audiências & Atendimentos do Mosteiro",

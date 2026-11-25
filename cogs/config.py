@@ -2,6 +2,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from database.connection import db
+from utils.permissions import AdminGroup
 
 
 class Config(commands.Cog):
@@ -10,10 +11,9 @@ class Config(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    config_group = app_commands.Group(
+    config_group = AdminGroup(
         name="config",
         description="Configurações administrativas do Mosteiro",
-        default_permissions=discord.Permissions(administrator=True),
     )
 
     @config_group.command(name="logchannel", description="Define o canal padrão de auditoria e logs.")

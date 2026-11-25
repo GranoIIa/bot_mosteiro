@@ -1,6 +1,7 @@
 import discord
 from discord import app_commands
 from discord.ext import commands
+from utils.permissions import is_admin_or_owner
 
 
 class EmbedModal(discord.ui.Modal, title="Criar Comunicado do Mosteiro"):
@@ -46,7 +47,7 @@ class EmbedMaker(commands.Cog):
         self.bot = bot
 
     @app_commands.command(name="gerar_embed", description="Abre o formulário para publicar um comunicado em embed.")
-    @app_commands.default_permissions(administrator=True)
+    @is_admin_or_owner()
     async def gerar_embed(self, interaction: discord.Interaction):
         await interaction.response.send_modal(EmbedModal())
 
