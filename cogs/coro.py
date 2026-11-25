@@ -65,6 +65,8 @@ class GuildMusicState:
         self.current: Optional[Track] = None
         self.volume: float = 0.5
         self.loop: bool = False
+        self.loop_queue: bool = False
+        self.skip_requested: bool = False
         self.lock = asyncio.Lock()
 
 
@@ -78,16 +80,29 @@ def _fetch_youtube_title(url: str) -> Optional[str]:
         return None
 
 
-def _extract_track(query: str, requester: str) -> Track:
+def _extract_tracks(query: str, requester: str, max_tracks: int = 1) -> list[Track]:
     local_path = os.path.join(AUDIO_DIR, query)
     if os.path.isfile(local_path):
-        return Track(title=os.path.basename(local_path), source=local_path, is_local=True, requester=requester)
+        return [Track(title=os.path.basename(local_path), source=local_path, is_local=True, requester=requester)]
 
     opts = dict(YTDL_OPTIONS)
     if os.path.isfile(COOKIES_FILE):
         opts["cookiefile"] = COOKIES_FILE
 
-    def _run_ydl(target_query: str) -> Track:
+    def _info_to_track(entry: dict) -> Track:
+        url = entry["url"]
+        protocol = entry.get("protocol", "")
+        is_hls = "m3u8" in protocol or ".m3u8" in url
+        return Track(
+            title=entry.get("title", "Faixa sem título"),
+            source=url,
+            webpage_url=entry.get("webpage_url"),
+            is_local=False,
+            is_hls=is_hls,
+            requester=requester,
+        )
+
+    def _run_ydl(target_query: str) -> list[Track]:
         is_direct_url = target_query.startswith(("http://", "https://"))
         run_opts = dict(opts)
         if not is_direct_url:
@@ -103,18 +118,8 @@ def _extract_track(query: str, requester: str) -> Track:
                 entries = [e for e in info["entries"] if e and e.get("url")]
                 if not entries:
                     raise ValueError("Nenhum resultado reproduzível encontrado (faixas bloqueadas ou com DRM).")
-                info = entries[0]
-            url = info["url"]
-            protocol = info.get("protocol", "")
-            is_hls = "m3u8" in protocol or ".m3u8" in url
-            return Track(
-                title=info.get("title", "Faixa sem título"),
-                source=url,
-                webpage_url=info.get("webpage_url"),
-                is_local=False,
-                is_hls=is_hls,
-                requester=requester,
-            )
+                return [_info_to_track(e) for e in entries[:max_tracks]]
+            return [_info_to_track(info)]
 
     try:
         return _run_ydl(query)
@@ -130,16 +135,20 @@ def _extract_track(query: str, requester: str) -> Track:
             if not yt_title:
                 raise
             search_term = yt_title
-        elif query.startswith(("http://", "https://", "scsearch:", "ytsearch:")):
+        elif query.startswith(("http://", "https://", "scsearch:", "scsearch5:", "ytsearch:")):
             raise
 
         try:
-            return _run_ydl(f"scsearch:{search_term}")
+            return _run_ydl(f"scsearch5:{search_term}")
         except Exception:
             short_q = " ".join(search_term.split()[:3])
             if short_q and short_q != search_term:
-                return _run_ydl(f"scsearch:{short_q}")
+                return _run_ydl(f"scsearch5:{short_q}")
             raise
+
+
+def _extract_track(query: str, requester: str) -> Track:
+    return _extract_tracks(query, requester, max_tracks=1)[0]
 
 
 class Music(commands.Cog):
@@ -194,18 +203,26 @@ class Music(commands.Cog):
             return
 
         async with state.lock:
-            if state.loop and state.current is not None:
+            if vc.is_playing() or vc.is_paused():
+                return
+            skipping = state.skip_requested
+            state.skip_requested = False
+
+            if state.loop and not skipping and state.current is not None:
                 next_track = state.current
                 if not next_track.is_local and next_track.webpage_url:
                     try:
                         next_track = await asyncio.to_thread(_extract_track, next_track.webpage_url, next_track.requester)
                     except Exception:
                         pass
-            elif state.queue:
-                next_track = state.queue.popleft()
             else:
-                state.current = None
-                return
+                if state.loop_queue and state.current is not None:
+                    state.queue.append(state.current)
+                if state.queue:
+                    next_track = state.queue.popleft()
+                else:
+                    state.current = None
+                    return
 
             state.current = next_track
             if next_track.is_local or next_track.is_hls:
@@ -288,8 +305,8 @@ class Music(commands.Cog):
 
             query = AMBIENCE_PRESETS[preset]
             try:
-                track = await asyncio.wait_for(
-                    asyncio.to_thread(_extract_track, query, ctx.author.display_name),
+                tracks = await asyncio.wait_for(
+                    asyncio.to_thread(_extract_tracks, query, ctx.author.display_name, 5),
                     timeout=30.0,
                 )
             except asyncio.TimeoutError:
@@ -299,12 +316,17 @@ class Music(commands.Cog):
             state = self._get_state(ctx.guild.id)
             state.queue.clear()
             state.current = None
-            state.loop = True
+            state.loop = False
+            state.loop_queue = True
+            state.skip_requested = False
             if vc.is_playing() or vc.is_paused():
                 vc.stop()
-            state.queue.append(track)
+            state.queue.extend(tracks)
             await self._play_next(ctx.guild, ctx.channel)
-            await ctx.send(f"🕯️ Ambientação **{preset}** iniciada em modo loop: **{track.title}**")
+            await ctx.send(
+                f"🕯️ Ambientação **{preset}** iniciada ({len(tracks)} faixas em loop): **{tracks[0].title}**\n"
+                f"💡 Use `!skip` para pular para a próxima faixa da ambientação."
+            )
         except Exception as e:
             await ctx.send(f"❌ Erro ao iniciar ambientação: `{type(e).__name__}: {e}`")
 
@@ -339,10 +361,8 @@ class Music(commands.Cog):
             await ctx.send("❌ Nada está tocando no momento.")
             return
         state = self._get_state(ctx.guild.id)
-        was_loop = state.loop
-        state.loop = False
+        state.skip_requested = True
         vc.stop()
-        state.loop = was_loop
         await ctx.send("⏭️ Faixa pulada.")
 
     @commands.hybrid_command(name="stop", description="Para a música, limpa a fila e desconecta do canal de voz.")
@@ -351,6 +371,8 @@ class Music(commands.Cog):
             return
         state = self._get_state(ctx.guild.id)
         state.loop = False
+        state.loop_queue = False
+        state.skip_requested = False
         state.current = None
         state.queue.clear()
         vc = ctx.guild.voice_client
