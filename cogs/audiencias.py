@@ -25,7 +25,7 @@ async def ensure_ticket_categories(guild: discord.Guild) -> dict:
     for key, info in TICKET_TYPES.items():
         cat_cfg = tcfg["categories"].setdefault(key, {"category_id": None, "role_ids": []})
         cat_id = cat_cfg.get("category_id")
-        category = guild.get_category(cat_id) if cat_id else None
+        category = guild.get_channel(cat_id) if cat_id else None
 
         if category is None:
             category = discord.utils.get(guild.categories, name=info["category_name"])
@@ -154,7 +154,7 @@ class TicketCategorySelect(discord.ui.Select):
 
             tcfg = await ensure_ticket_categories(interaction.guild)
             cat_cfg = tcfg.get("categories", {}).get(ticket_type, {})
-            category = interaction.guild.get_category(cat_cfg.get("category_id")) if cat_cfg.get("category_id") else None
+            category = interaction.guild.get_channel(cat_cfg.get("category_id")) if cat_cfg.get("category_id") else None
 
             overwrites = {
                 interaction.guild.default_role: discord.PermissionOverwrite(view_channel=False),
