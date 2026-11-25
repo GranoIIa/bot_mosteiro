@@ -227,12 +227,17 @@ class Audiencias(commands.Cog):
         description="Gerenciamento de audiências e atendimentos privados",
     )
 
-    @commands.Cog.listener()
-    async def on_ready(self):
+    async def cog_load(self):
         self.bot.add_view(TicketPanelView())
         self.bot.add_view(TicketControlView())
+
+    @commands.Cog.listener()
+    async def on_ready(self):
         for guild in self.bot.guilds:
-            await ensure_ticket_categories(guild)
+            try:
+                await ensure_ticket_categories(guild)
+            except Exception as e:
+                print(f"⚠️ Erro ao criar categorias de ticket em {guild.name}: {e}")
 
     @audiencia_group.command(name="configurar", description="Configura categoria, cargo responsável e canal de logs.")
     @is_admin_or_owner()
