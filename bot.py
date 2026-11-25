@@ -1,5 +1,6 @@
 import os
 import sys
+import ctypes.util
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -10,6 +11,28 @@ from utils.permissions import OWNER_IDS
 if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
+
+# Carrega libopus (necessário para áudio de voz)
+if not discord.opus.is_loaded():
+    _opus_candidates = [
+        "libopus.so.0",
+        "libopus.so",
+        "opus",
+        "/usr/lib/x86_64-linux-gnu/libopus.so.0",
+        "/usr/lib/aarch64-linux-gnu/libopus.so.0",
+    ]
+    _found = ctypes.util.find_library("opus")
+    if _found:
+        _opus_candidates.insert(0, _found)
+    for _lib in _opus_candidates:
+        try:
+            discord.opus.load_opus(_lib)
+            print(f"🔊 Opus carregado: {_lib}")
+            break
+        except Exception:
+            continue
+    if not discord.opus.is_loaded():
+        print("⚠️ AVISO: libopus não encontrada. Comandos de voz/música não funcionarão.")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(BASE_DIR, ".env"))
