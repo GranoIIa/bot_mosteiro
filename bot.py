@@ -9,8 +9,10 @@ if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
 
-load_dotenv()
-TOKEN = os.getenv("DISCORD_TOKEN")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+load_dotenv(os.path.join(BASE_DIR, ".env"))
+_raw_token = os.getenv("DISCORD_TOKEN") or os.getenv("TOKEN")
+TOKEN = _raw_token.strip().strip('"').strip("'") if _raw_token else None
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -63,4 +65,4 @@ if __name__ == "__main__":
     if TOKEN and TOKEN != "seutokenaqui":
         bot.run(TOKEN)
     else:
-        print("❌ ERRO: DISCORD_TOKEN inválido ou ausente no .env.")
+        print("❌ ERRO: DISCORD_TOKEN inválido ou ausente. Configure no .env (local) ou nas Variáveis de Ambiente da Discloud (DISCORD_TOKEN).")
