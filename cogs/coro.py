@@ -1,10 +1,13 @@
 import asyncio
 from collections import deque
 from dataclasses import dataclass
+import io
 import json
+import math
 import os
 import platform
 import shutil
+import struct
 from typing import Dict, Optional
 import urllib.parse
 import urllib.request
@@ -15,7 +18,10 @@ import imageio_ffmpeg
 import yt_dlp
 from database.connection import db
 
-FFMPEG_EXE = shutil.which("ffmpeg") or imageio_ffmpeg.get_ffmpeg_exe()
+try:
+    FFMPEG_EXE = imageio_ffmpeg.get_ffmpeg_exe()
+except Exception:
+    FFMPEG_EXE = shutil.which("ffmpeg") or "ffmpeg"
 AUDIO_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "audio")
 
 COOKIES_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "cookies.txt")
@@ -49,6 +55,7 @@ class Track:
     source: str
     webpage_url: Optional[str] = None
     is_local: bool = False
+    is_hls: bool = False
     requester: str = "Desconhecido"
 
 
@@ -88,11 +95,15 @@ def _extract_track(query: str, requester: str) -> Track:
                 if not entries:
                     raise ValueError("Nenhum resultado encontrado.")
                 info = entries[0]
+            url = info["url"]
+            protocol = info.get("protocol", "")
+            is_hls = "m3u8" in protocol or ".m3u8" in url
             return Track(
                 title=info.get("title", "Faixa sem título"),
-                source=info["url"],
+                source=url,
                 webpage_url=info.get("webpage_url"),
                 is_local=False,
+                is_hls=is_hls,
                 requester=requester,
             )
 
@@ -188,7 +199,10 @@ class Music(commands.Cog):
                 return
 
             state.current = next_track
-            ffmpeg_opts = {"options": "-vn"} if next_track.is_local else FFMPEG_STREAM_OPTIONS
+            if next_track.is_local or next_track.is_hls:
+                ffmpeg_opts = {"options": "-vn"}
+            else:
+                ffmpeg_opts = FFMPEG_STREAM_OPTIONS
             raw_source = discord.FFmpegPCMAudio(next_track.source, executable=FFMPEG_EXE, **ffmpeg_opts)
             audio = discord.PCMVolumeTransformer(raw_source, volume=state.volume)
 
@@ -371,6 +385,43 @@ class Music(commands.Cog):
         state.loop = not state.loop
         status = "ativado 🔁" if state.loop else "desativado"
         await ctx.send(f"Modo loop **{status}**.")
+
+    @commands.command(name="testaudio")
+    @commands.is_owner()
+    async def testaudio(self, ctx: commands.Context):
+        """Diagnostica o áudio de voz tocando um bipe puro (sem FFmpeg/yt-dlp)."""
+        vc = await self._ensure_voice(ctx)
+        if not vc:
+            return
+        if vc.is_playing() or vc.is_paused():
+            vc.stop()
+
+        # Gera 2 segundos de tom 440Hz estéreo 48kHz s16le
+        sample_rate = 48000
+        duration = 2
+        amp = 8000
+        buf = bytearray()
+        for i in range(sample_rate * duration):
+            val = int(amp * math.sin(2.0 * math.pi * 440.0 * i / sample_rate))
+            sample = struct.pack("<hh", val, val)
+            buf.extend(sample)
+
+        try:
+            import davey
+            davey_ver = getattr(davey, "__version__", "ok")
+        except Exception as e:
+            davey_ver = f"erro: {e}"
+
+        info_msg = (
+            f"🔧 **Diagnóstico de Voz**\n"
+            f"• `opus.is_loaded()`: `{discord.opus.is_loaded()}`\n"
+            f"• `davey`: `{davey_ver}`\n"
+            f"• `ffmpeg`: `{FFMPEG_EXE}`\n"
+            f"• `vc.is_connected()`: `{vc.is_connected()}` | `latency`: `{vc.latency * 1000:.0f}ms`\n"
+            f"🔊 Tocando tom de teste (440Hz por 2s)..."
+        )
+        await ctx.send(info_msg)
+        vc.play(discord.PCMAudio(io.BytesIO(bytes(buf))))
 
 
 async def setup(bot: commands.Bot):
