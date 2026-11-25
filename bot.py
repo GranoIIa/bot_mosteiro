@@ -13,26 +13,51 @@ if sys.platform == "win32":
     sys.stderr.reconfigure(encoding="utf-8")
 
 # Carrega libopus (necessário para áudio de voz)
-if not discord.opus.is_loaded():
+def _load_opus():
+    if discord.opus.is_loaded():
+        return True
+
+    # Tenta caminhos conhecidos
     _opus_candidates = [
+        ctypes.util.find_library("opus"),
         "libopus.so.0",
         "libopus.so",
         "opus",
         "/usr/lib/x86_64-linux-gnu/libopus.so.0",
         "/usr/lib/aarch64-linux-gnu/libopus.so.0",
+        "/usr/lib/libopus.so.0",
+        "/usr/local/lib/libopus.so.0",
+        "/app/libopus.so.0",
     ]
-    _found = ctypes.util.find_library("opus")
-    if _found:
-        _opus_candidates.insert(0, _found)
-    for _lib in _opus_candidates:
+    for _lib in filter(None, _opus_candidates):
         try:
             discord.opus.load_opus(_lib)
             print(f"🔊 Opus carregado: {_lib}")
-            break
+            return True
         except Exception:
             continue
-    if not discord.opus.is_loaded():
-        print("⚠️ AVISO: libopus não encontrada. Comandos de voz/música não funcionarão.")
+
+    # Fallback: tenta instalar via apt-get e recarregar
+    if sys.platform == "linux":
+        import subprocess
+        for pkg in ["libopus0", "libopus-dev", "opus-tools"]:
+            try:
+                subprocess.run(["apt-get", "install", "-y", "-qq", pkg], capture_output=True, timeout=30)
+            except Exception:
+                pass
+        # Tenta carregar de novo após instalar
+        for _lib in filter(None, _opus_candidates):
+            try:
+                discord.opus.load_opus(_lib)
+                print(f"🔊 Opus carregado (pós-install): {_lib}")
+                return True
+            except Exception:
+                continue
+
+    print("⚠️ AVISO: libopus não encontrada. Comandos de voz/música não funcionarão.")
+    return False
+
+_load_opus()
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(BASE_DIR, ".env"))
