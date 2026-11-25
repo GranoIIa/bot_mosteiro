@@ -69,12 +69,13 @@ class TicketControlView(discord.ui.View):
 
     @discord.ui.button(label="🔒 Encerrar", style=discord.ButtonStyle.danger, custom_id="mosteiro:ticket_close")
     async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
         ticket = await db.get_ticket(interaction.channel_id)
         if not ticket:
-            await interaction.response.send_message("❌ Ticket não encontrado no registro.", ephemeral=True)
+            await interaction.followup.send("❌ Ticket não encontrado no registro.", ephemeral=True)
             return
 
-        await interaction.response.send_message("🔒 Gerando transcrição e encerrando este atendimento em 5 segundos...")
+        await interaction.followup.send("🔒 Gerando transcrição e encerrando este atendimento em 5 segundos...")
 
         lines = [
             f"=== TRANSCRIÇÃO DE TICKET #{ticket.get('number', '?')} ===",
@@ -137,72 +138,76 @@ class TicketCategorySelect(discord.ui.Select):
         )
 
     async def callback(self, interaction: discord.Interaction):
-        ticket_type = self.values[0]
-        info = TICKET_TYPES[ticket_type]
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            ticket_type = self.values[0]
+            info = TICKET_TYPES[ticket_type]
 
-        open_tickets = await db.list_open_tickets(interaction.guild_id, interaction.user.id)
-        for t in open_tickets:
-            if t.get("type") == ticket_type and interaction.guild.get_channel(t["channel_id"]):
-                await interaction.response.send_message(
-                    f"⚠️ Você já possui um atendimento aberto em <#{t['channel_id']}>.",
-                    ephemeral=True,
+            open_tickets = await db.list_open_tickets(interaction.guild_id, interaction.user.id)
+            for t in open_tickets:
+                if t.get("type") == ticket_type and interaction.guild.get_channel(t["channel_id"]):
+                    await interaction.followup.send(
+                        f"⚠️ Você já possui um atendimento aberto em <#{t['channel_id']}>.",
+                        ephemeral=True,
+                    )
+                    return
+
+            tcfg = await ensure_ticket_categories(interaction.guild)
+            cat_cfg = tcfg.get("categories", {}).get(ticket_type, {})
+            category = interaction.guild.get_category(cat_cfg.get("category_id")) if cat_cfg.get("category_id") else None
+
+            overwrites = {
+                interaction.guild.default_role: discord.PermissionOverwrite(view_channel=False),
+                interaction.user: discord.PermissionOverwrite(view_channel=True, send_messages=True, attach_files=True, read_message_history=True),
+                interaction.guild.me: discord.PermissionOverwrite(view_channel=True, send_messages=True, manage_channels=True),
+            }
+
+            mention_roles = []
+            for role_id in cat_cfg.get("role_ids", []):
+                role = interaction.guild.get_role(role_id)
+                if role:
+                    overwrites[role] = discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True)
+                    mention_roles.append(role.mention)
+
+            ticket_num = await db.next_ticket_number(interaction.guild_id)
+            channel_name = f"{info['prefix']}-{ticket_num:04d}"
+
+            try:
+                channel = await interaction.guild.create_text_channel(
+                    name=channel_name,
+                    category=category,
+                    overwrites=overwrites,
+                    reason=f"Ticket {info['label']} aberto por {interaction.user}",
                 )
+            except discord.Forbidden:
+                await interaction.followup.send("❌ Sem permissão para criar canais de atendimento.", ephemeral=True)
                 return
 
-        tcfg = await ensure_ticket_categories(interaction.guild)
-        cat_cfg = tcfg.get("categories", {}).get(ticket_type, {})
-        category = interaction.guild.get_category(cat_cfg.get("category_id")) if cat_cfg.get("category_id") else None
-
-        overwrites = {
-            interaction.guild.default_role: discord.PermissionOverwrite(view_channel=False),
-            interaction.user: discord.PermissionOverwrite(view_channel=True, send_messages=True, attach_files=True, read_message_history=True),
-            interaction.guild.me: discord.PermissionOverwrite(view_channel=True, send_messages=True, manage_channels=True),
-        }
-
-        mention_roles = []
-        for role_id in cat_cfg.get("role_ids", []):
-            role = interaction.guild.get_role(role_id)
-            if role:
-                overwrites[role] = discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True)
-                mention_roles.append(role.mention)
-
-        ticket_num = await db.next_ticket_number(interaction.guild_id)
-        channel_name = f"{info['prefix']}-{ticket_num:04d}"
-
-        try:
-            channel = await interaction.guild.create_text_channel(
-                name=channel_name,
-                category=category,
-                overwrites=overwrites,
-                reason=f"Ticket {info['label']} aberto por {interaction.user}",
+            await db.save_ticket(
+                channel.id,
+                {
+                    "channel_id": channel.id,
+                    "guild_id": interaction.guild_id,
+                    "author_id": interaction.user.id,
+                    "type": ticket_type,
+                    "number": ticket_num,
+                    "claimed_by": None,
+                },
             )
-        except discord.Forbidden:
-            await interaction.response.send_message("❌ Sem permissão para criar canais de atendimento.", ephemeral=True)
-            return
 
-        await db.save_ticket(
-            channel.id,
-            {
-                "channel_id": channel.id,
-                "guild_id": interaction.guild_id,
-                "author_id": interaction.user.id,
-                "type": ticket_type,
-                "number": ticket_num,
-                "claimed_by": None,
-            },
-        )
-
-        embed = discord.Embed(
-            title=f"{info['emoji']} {info['label']} #{ticket_num:04d}",
-            description=(
-                f"Saudações, {interaction.user.mention}.\n"
-                "Descreva sua solicitação com clareza para que a equipe responsável possa atendê-lo."
-            ),
-            color=discord.Color.dark_gold(),
-        )
-        mentions = " ".join([interaction.user.mention] + mention_roles)
-        await channel.send(content=mentions, embed=embed, view=TicketControlView())
-        await interaction.response.send_message(f"✅ Atendimento aberto em {channel.mention}.", ephemeral=True)
+            embed = discord.Embed(
+                title=f"{info['emoji']} {info['label']} #{ticket_num:04d}",
+                description=(
+                    f"Saudações, {interaction.user.mention}.\n"
+                    "Descreva sua solicitação com clareza para que a equipe responsável possa atendê-lo."
+                ),
+                color=discord.Color.dark_gold(),
+            )
+            mentions = " ".join([interaction.user.mention] + mention_roles)
+            await channel.send(content=mentions, embed=embed, view=TicketControlView())
+            await interaction.followup.send(f"✅ Atendimento aberto em {channel.mention}.", ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Erro ao abrir atendimento: `{e}`", ephemeral=True)
 
 
 class TicketPanelView(discord.ui.View):
