@@ -16,7 +16,8 @@ DEFAULT_DB: Dict[str, Any] = {
 def _default_guild_settings(guild_id: int) -> Dict[str, Any]:
     return {
         "guild_id": guild_id,
-        "log_channel": None,
+        "log_channel": 1575015483676041306,
+        "system_log_channel": 1575015486989668434,
         "welcome_channel": 1574741486057029687,
         "welcome_message": "🕊️ Bem-vindo ao mosteiro, {usuario}! Que sua jornada em **{servidor}** seja de paz e propósito. ({membros} membros)",
         "farewell_channel": 1574741486057029687,
@@ -29,17 +30,17 @@ def _default_guild_settings(guild_id: int) -> Dict[str, Any]:
         "role_panels": {},
         "scheduled_messages": [],
         "ticket_config": {
-            "log_channel": None,
+            "log_channel": 1575015485572124784,
             "counter": 0,
             "categories": {
-                "abade": {"category_id": None, "role_ids": []},
-                "denuncia": {"category_id": None, "role_ids": []},
-                "peticao": {"category_id": None, "role_ids": []},
-                "privado": {"category_id": None, "role_ids": []},
+                "abade": {"category_id": None, "role_ids": [1574767552666664980, 1574792729773477999, 1574758420131614770]},
+                "denuncia": {"category_id": None, "role_ids": [1574767552666664980, 1574792729773477999, 1574793113027874827, 1574793966543573083]},
+                "peticao": {"category_id": None, "role_ids": [1574767552666664980, 1574792729773477999, 1574758420131614770]},
+                "privado": {"category_id": None, "role_ids": [1574767552666664980, 1574792729773477999, 1574758420131614770]},
             },
         },
         "app_config": {
-            "review_channel": None,
+            "review_channel": 1574996624931819651,
             "mosteiro_role_id": None,
             "clero_role_id": None,
         },
@@ -87,6 +88,24 @@ class JsonDatabase:
             if key not in current:
                 current[key] = val
                 changed = True
+
+        # Vincula automaticamente os canais de logs padrão se ainda estiverem vazios
+        if guild_id == 1574741482630287481:
+            if not current.get("log_channel"):
+                current["log_channel"] = defaults["log_channel"]
+                changed = True
+            if not current.get("system_log_channel"):
+                current["system_log_channel"] = defaults["system_log_channel"]
+                changed = True
+            tcfg = current.setdefault("ticket_config", {})
+            if not tcfg.get("log_channel"):
+                tcfg["log_channel"] = defaults["ticket_config"]["log_channel"]
+                changed = True
+            acfg = current.setdefault("app_config", {})
+            if not acfg.get("review_channel"):
+                acfg["review_channel"] = defaults["app_config"]["review_channel"]
+                changed = True
+
         if changed:
             await self._write(data)
         return current

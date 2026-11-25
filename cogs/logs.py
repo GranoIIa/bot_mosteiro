@@ -15,6 +15,51 @@ class Logs(commands.Cog):
         channel_id = settings.get("log_channel")
         return guild.get_channel(channel_id) if channel_id else None
 
+    async def get_system_log_channel(self, guild: discord.Guild):
+        settings = await db.get_guild_settings(guild.id)
+        channel_id = settings.get("system_log_channel") or settings.get("log_channel")
+        return guild.get_channel(channel_id) if channel_id else None
+
+    @commands.Cog.listener()
+    async def on_ready(self):
+        for guild in self.bot.guilds:
+            ch = await self.get_system_log_channel(guild)
+            if ch:
+                try:
+                    embed = discord.Embed(
+                        title="⚙️ Bot do Mosteiro Online",
+                        description="Sistema inicializado e logs vinculados.",
+                        color=discord.Color.green(),
+                        timestamp=datetime.datetime.now(datetime.timezone.utc),
+                    )
+                    await ch.send(embed=embed)
+                except discord.HTTPException:
+                    pass
+
+    @commands.Cog.listener()
+    async def on_member_join(self, member: discord.Member):
+        ch = await self.get_system_log_channel(member.guild)
+        if ch:
+            embed = discord.Embed(
+                title="📥 Membro Entrou",
+                description=f"{member.mention} (`{member.id}`)",
+                color=discord.Color.blue(),
+                timestamp=datetime.datetime.now(datetime.timezone.utc),
+            )
+            await ch.send(embed=embed)
+
+    @commands.Cog.listener()
+    async def on_member_remove(self, member: discord.Member):
+        ch = await self.get_system_log_channel(member.guild)
+        if ch:
+            embed = discord.Embed(
+                title="📤 Membro Saiu",
+                description=f"**{member}** (`{member.id}`)",
+                color=discord.Color.dark_grey(),
+                timestamp=datetime.datetime.now(datetime.timezone.utc),
+            )
+            await ch.send(embed=embed)
+
     @commands.Cog.listener()
     async def on_message_delete(self, message: discord.Message):
         if message.author.bot or not message.guild:
