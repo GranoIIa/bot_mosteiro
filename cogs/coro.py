@@ -9,7 +9,6 @@ import urllib.parse
 import urllib.request
 import discord
 from discord import app_commands
-from discord.app_commands import Choice
 from discord.ext import commands
 import imageio_ffmpeg
 import yt_dlp
@@ -123,7 +122,7 @@ def _extract_track(query: str, requester: str) -> Track:
 
 
 class Music(commands.Cog):
-    """Player de voz com comandos padrão (/play, /skip, /stop, etc.) e ambientação medieval."""
+    """Player de voz com comandos híbridos (!play e /play, !skip e /skip, etc.) e ambientação medieval."""
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -134,29 +133,21 @@ class Music(commands.Cog):
             self.states[guild_id] = GuildMusicState()
         return self.states[guild_id]
 
-    async def _check_music_channel(self, interaction: discord.Interaction) -> bool:
-        settings = await db.get_guild_settings(interaction.guild_id)
+    async def _check_music_channel(self, ctx: commands.Context) -> bool:
+        settings = await db.get_guild_settings(ctx.guild.id)
         music_channel_id = settings.get("music_channel")
-        if music_channel_id and interaction.guild.get_channel(music_channel_id) and interaction.channel_id != music_channel_id:
-            msg = f"🎶 Use os comandos de música apenas no canal <#{music_channel_id}>."
-            if interaction.response.is_done():
-                await interaction.followup.send(msg, ephemeral=True)
-            else:
-                await interaction.response.send_message(msg, ephemeral=True)
+        if music_channel_id and ctx.guild.get_channel(music_channel_id) and ctx.channel.id != music_channel_id:
+            await ctx.send(f"🎶 Use os comandos de música apenas no canal <#{music_channel_id}>.")
             return False
         return True
 
-    async def _ensure_voice(self, interaction: discord.Interaction) -> Optional[discord.VoiceClient]:
-        if not interaction.user.voice or not interaction.user.voice.channel:
-            msg = "❌ Você precisa estar conectado a um canal de voz."
-            if interaction.response.is_done():
-                await interaction.followup.send(msg, ephemeral=True)
-            else:
-                await interaction.response.send_message(msg, ephemeral=True)
+    async def _ensure_voice(self, ctx: commands.Context) -> Optional[discord.VoiceClient]:
+        if not ctx.author.voice or not ctx.author.voice.channel:
+            await ctx.send("❌ Você precisa estar conectado a um canal de voz.")
             return None
 
-        target_channel = interaction.user.voice.channel
-        vc = interaction.guild.voice_client
+        target_channel = ctx.author.voice.channel
+        vc = ctx.guild.voice_client
         if vc is None:
             return await target_channel.connect(timeout=30.0, self_deaf=True)
         if vc.channel != target_channel:
@@ -201,145 +192,141 @@ class Music(commands.Cog):
 
             vc.play(audio, after=after_play)
 
-    @app_commands.command(name="play", description="Toca uma música, canto gregoriano ou ambientação (busca, URL ou arquivo local).")
+    @commands.hybrid_command(name="play", description="Toca uma música, canto gregoriano ou ambientação (busca, URL ou arquivo local).")
     @app_commands.describe(busca="Nome da música, link do YouTube/stream ou nome do arquivo em assets/audio")
-    async def play(self, interaction: discord.Interaction, busca: str):
-        if not await self._check_music_channel(interaction):
+    async def play(self, ctx: commands.Context, *, busca: str):
+        if not await self._check_music_channel(ctx):
             return
-        await interaction.response.defer(thinking=True)
+        await ctx.defer()
         try:
             try:
-                vc = await self._ensure_voice(interaction)
+                vc = await self._ensure_voice(ctx)
             except asyncio.TimeoutError:
-                await interaction.followup.send("❌ Tempo esgotado ao conectar ao canal de voz. Verifique as permissões do bot e tente novamente.", ephemeral=True)
+                await ctx.send("❌ Tempo esgotado ao conectar ao canal de voz. Verifique as permissões do bot e tente novamente.")
                 return
             if not vc:
                 return
 
             try:
                 track = await asyncio.wait_for(
-                    asyncio.to_thread(_extract_track, busca, interaction.user.display_name),
+                    asyncio.to_thread(_extract_track, busca, ctx.author.display_name),
                     timeout=30.0,
                 )
             except asyncio.TimeoutError:
-                await interaction.followup.send("❌ Tempo esgotado ao buscar a música. Tente outro nome ou link.", ephemeral=True)
+                await ctx.send("❌ Tempo esgotado ao buscar a música. Tente outro nome ou link.")
                 return
 
-            state = self._get_state(interaction.guild_id)
+            state = self._get_state(ctx.guild.id)
             state.queue.append(track)
 
             if not vc.is_playing() and not vc.is_paused():
-                await self._play_next(interaction.guild, interaction.channel)
-                await interaction.followup.send(f"🎶 Tocando agora: **{track.title}**")
+                await self._play_next(ctx.guild, ctx.channel)
+                await ctx.send(f"🎶 Tocando agora: **{track.title}**")
             else:
-                await interaction.followup.send(f"📜 Adicionado à fila: **{track.title}**")
+                await ctx.send(f"📜 Adicionado à fila: **{track.title}**")
         except Exception as e:
-            await interaction.followup.send(f"❌ Não foi possível tocar o áudio: `{type(e).__name__}: {e}`", ephemeral=True)
+            await ctx.send(f"❌ Não foi possível tocar o áudio: `{type(e).__name__}: {e}`")
 
-    @app_commands.command(name="ambiente", description="Inicia uma ambientação medieval/gregoriana em loop contínuo.")
-    @app_commands.choices(
-        preset=[
-            Choice(name="Cantos Gregorianos", value="gregoriano"),
-            Choice(name="Mosteiro Medieval com Chuva", value="mosteiro_chuva"),
-            Choice(name="Scriptorium & Alaúde Medieval", value="scriptorium"),
-        ]
-    )
-    @app_commands.describe(preset="Escolha o clima sonoro do Mosteiro")
-    async def ambiente(self, interaction: discord.Interaction, preset: Choice[str]):
-        if not await self._check_music_channel(interaction):
+    @commands.hybrid_command(name="ambiente", description="Inicia uma ambientação medieval/gregoriana em loop contínuo.")
+    @app_commands.describe(preset="Escolha: gregoriano, mosteiro_chuva ou scriptorium")
+    async def ambiente(self, ctx: commands.Context, preset: str = "gregoriano"):
+        if not await self._check_music_channel(ctx):
             return
-        await interaction.response.defer(thinking=True)
+        if preset not in AMBIENCE_PRESETS:
+            await ctx.send(f"❌ Preset inválido. Opções: `{', '.join(AMBIENCE_PRESETS.keys())}`")
+            return
+        await ctx.defer()
         try:
             try:
-                vc = await self._ensure_voice(interaction)
+                vc = await self._ensure_voice(ctx)
             except asyncio.TimeoutError:
-                await interaction.followup.send("❌ Tempo esgotado ao conectar ao canal de voz. Verifique as permissões do bot e tente novamente.", ephemeral=True)
+                await ctx.send("❌ Tempo esgotado ao conectar ao canal de voz. Verifique as permissões do bot e tente novamente.")
                 return
             if not vc:
                 return
 
-            query = AMBIENCE_PRESETS[preset.value]
+            query = AMBIENCE_PRESETS[preset]
             try:
                 track = await asyncio.wait_for(
-                    asyncio.to_thread(_extract_track, query, interaction.user.display_name),
+                    asyncio.to_thread(_extract_track, query, ctx.author.display_name),
                     timeout=30.0,
                 )
             except asyncio.TimeoutError:
-                await interaction.followup.send("❌ Tempo esgotado ao buscar a ambientação. Tente novamente.", ephemeral=True)
+                await ctx.send("❌ Tempo esgotado ao buscar a ambientação. Tente novamente.")
                 return
 
-            state = self._get_state(interaction.guild_id)
+            state = self._get_state(ctx.guild.id)
             state.queue.clear()
             state.current = None
             state.loop = True
             if vc.is_playing() or vc.is_paused():
                 vc.stop()
             state.queue.append(track)
-            await self._play_next(interaction.guild, interaction.channel)
-            await interaction.followup.send(f"🕯️ Ambientação **{preset.name}** iniciada em modo loop: **{track.title}**")
+            await self._play_next(ctx.guild, ctx.channel)
+            await ctx.send(f"🕯️ Ambientação **{preset}** iniciada em modo loop: **{track.title}**")
         except Exception as e:
-            await interaction.followup.send(f"❌ Erro ao iniciar ambientação: `{type(e).__name__}: {e}`", ephemeral=True)
+            await ctx.send(f"❌ Erro ao iniciar ambientação: `{type(e).__name__}: {e}`")
 
-    @app_commands.command(name="pause", description="Pausa a reprodução atual.")
-    async def pause(self, interaction: discord.Interaction):
-        if not await self._check_music_channel(interaction):
+    @commands.hybrid_command(name="pause", description="Pausa a reprodução atual.")
+    async def pause(self, ctx: commands.Context):
+        if not await self._check_music_channel(ctx):
             return
-        vc = interaction.guild.voice_client
+        vc = ctx.guild.voice_client
         if vc and vc.is_playing():
             vc.pause()
-            await interaction.response.send_message("⏸️ Reprodução pausada.")
+            await ctx.send("⏸️ Reprodução pausada.")
         else:
-            await interaction.response.send_message("❌ Nada está tocando no momento.", ephemeral=True)
+            await ctx.send("❌ Nada está tocando no momento.")
 
-    @app_commands.command(name="resume", description="Retoma a reprodução pausada.")
-    async def resume(self, interaction: discord.Interaction):
-        if not await self._check_music_channel(interaction):
+    @commands.hybrid_command(name="resume", description="Retoma a reprodução pausada.")
+    async def resume(self, ctx: commands.Context):
+        if not await self._check_music_channel(ctx):
             return
-        vc = interaction.guild.voice_client
+        vc = ctx.guild.voice_client
         if vc and vc.is_paused():
             vc.resume()
-            await interaction.response.send_message("▶️ Reprodução retomada.")
+            await ctx.send("▶️ Reprodução retomada.")
         else:
-            await interaction.response.send_message("❌ A reprodução não está pausada.", ephemeral=True)
+            await ctx.send("❌ A reprodução não está pausada.")
 
-    @app_commands.command(name="skip", description="Pula para a próxima faixa da fila.")
-    async def skip(self, interaction: discord.Interaction):
-        if not await self._check_music_channel(interaction):
+    @commands.hybrid_command(name="skip", description="Pula para a próxima faixa da fila.")
+    async def skip(self, ctx: commands.Context):
+        if not await self._check_music_channel(ctx):
             return
-        vc = interaction.guild.voice_client
+        vc = ctx.guild.voice_client
         if not vc or (not vc.is_playing() and not vc.is_paused()):
-            await interaction.response.send_message("❌ Nada está tocando no momento.", ephemeral=True)
+            await ctx.send("❌ Nada está tocando no momento.")
             return
-        state = self._get_state(interaction.guild_id)
+        state = self._get_state(ctx.guild.id)
         was_loop = state.loop
         state.loop = False
         vc.stop()
         state.loop = was_loop
-        await interaction.response.send_message("⏭️ Faixa pulada.")
+        await ctx.send("⏭️ Faixa pulada.")
 
-    @app_commands.command(name="stop", description="Para a música, limpa a fila e desconecta do canal de voz.")
-    async def stop(self, interaction: discord.Interaction):
-        if not await self._check_music_channel(interaction):
+    @commands.hybrid_command(name="stop", description="Para a música, limpa a fila e desconecta do canal de voz.")
+    async def stop(self, ctx: commands.Context):
+        if not await self._check_music_channel(ctx):
             return
-        state = self._get_state(interaction.guild_id)
+        state = self._get_state(ctx.guild.id)
         state.loop = False
         state.current = None
         state.queue.clear()
-        vc = interaction.guild.voice_client
+        vc = ctx.guild.voice_client
         if vc:
             vc.stop()
             await vc.disconnect()
-            await interaction.response.send_message("⏹️ Reprodução encerrada e bot desconectado.")
+            await ctx.send("⏹️ Reprodução encerrada e bot desconectado.")
         else:
-            await interaction.response.send_message("❌ O bot não está em um canal de voz.", ephemeral=True)
+            await ctx.send("❌ O bot não está em um canal de voz.")
 
-    @app_commands.command(name="queue", description="Exibe a faixa atual e a fila de reprodução.")
-    async def queue(self, interaction: discord.Interaction):
-        if not await self._check_music_channel(interaction):
+    @commands.hybrid_command(name="queue", aliases=["fila"], description="Exibe a faixa atual e a fila de reprodução.")
+    async def queue(self, ctx: commands.Context):
+        if not await self._check_music_channel(ctx):
             return
-        state = self._get_state(interaction.guild_id)
+        state = self._get_state(ctx.guild.id)
         if not state.current and not state.queue:
-            await interaction.response.send_message("📭 A fila está vazia.", ephemeral=True)
+            await ctx.send("📭 A fila está vazia.")
             return
         desc = []
         if state.current:
@@ -350,28 +337,29 @@ class Music(commands.Cog):
             for idx, item in enumerate(list(state.queue)[:10], start=1):
                 desc.append(f"`{idx}.` {item.title} *(pedido por {item.requester})*")
         embed = discord.Embed(title="🎶 Fila do Coro", description="\n".join(desc), color=discord.Color.dark_gold())
-        await interaction.response.send_message(embed=embed)
+        await ctx.send(embed=embed)
 
-    @app_commands.command(name="volume", description="Ajusta o volume do player (0 a 100).")
+    @commands.hybrid_command(name="volume", description="Ajusta o volume do player (0 a 100).")
     @app_commands.describe(nivel="Volume de 0 a 100")
-    async def volume(self, interaction: discord.Interaction, nivel: app_commands.Range[int, 0, 100]):
-        if not await self._check_music_channel(interaction):
+    async def volume(self, ctx: commands.Context, nivel: int = 50):
+        if not await self._check_music_channel(ctx):
             return
-        state = self._get_state(interaction.guild_id)
+        nivel = max(0, min(100, nivel))
+        state = self._get_state(ctx.guild.id)
         state.volume = nivel / 100.0
-        vc = interaction.guild.voice_client
+        vc = ctx.guild.voice_client
         if vc and vc.source and isinstance(vc.source, discord.PCMVolumeTransformer):
             vc.source.volume = state.volume
-        await interaction.response.send_message(f"🔊 Volume ajustado para **{nivel}%**.")
+        await ctx.send(f"🔊 Volume ajustado para **{nivel}%**.")
 
-    @app_commands.command(name="loop", description="Ativa ou desativa a repetição contínua da faixa atual.")
-    async def loop(self, interaction: discord.Interaction):
-        if not await self._check_music_channel(interaction):
+    @commands.hybrid_command(name="loop", description="Ativa ou desativa a repetição contínua da faixa atual.")
+    async def loop(self, ctx: commands.Context):
+        if not await self._check_music_channel(ctx):
             return
-        state = self._get_state(interaction.guild_id)
+        state = self._get_state(ctx.guild.id)
         state.loop = not state.loop
         status = "ativado 🔁" if state.loop else "desativado"
-        await interaction.response.send_message(f"Modo loop **{status}**.")
+        await ctx.send(f"Modo loop **{status}**.")
 
 
 async def setup(bot: commands.Bot):
