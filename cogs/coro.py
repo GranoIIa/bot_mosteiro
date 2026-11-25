@@ -3,6 +3,7 @@ from collections import deque
 from dataclasses import dataclass
 import json
 import os
+import shutil
 from typing import Dict, Optional
 import urllib.parse
 import urllib.request
@@ -14,7 +15,7 @@ import imageio_ffmpeg
 import yt_dlp
 from database.connection import db
 
-FFMPEG_EXE = imageio_ffmpeg.get_ffmpeg_exe()
+FFMPEG_EXE = shutil.which("ffmpeg") or imageio_ffmpeg.get_ffmpeg_exe()
 AUDIO_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "audio")
 
 COOKIES_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "cookies.txt")
@@ -25,7 +26,8 @@ YTDL_OPTIONS = {
     "quiet": True,
     "no_warnings": True,
     "no_color": True,
-    "default_search": "ytsearch",
+    "default_search": "scsearch",
+    "socket_timeout": 10,
     "source_address": "0.0.0.0",
 }
 
@@ -156,7 +158,7 @@ class Music(commands.Cog):
         target_channel = interaction.user.voice.channel
         vc = interaction.guild.voice_client
         if vc is None:
-            return await target_channel.connect()
+            return await target_channel.connect(timeout=15.0, self_deaf=True)
         if vc.channel != target_channel:
             await vc.move_to(target_channel)
         return vc
@@ -205,24 +207,26 @@ class Music(commands.Cog):
         if not await self._check_music_channel(interaction):
             return
         await interaction.response.defer(thinking=True)
-        vc = await self._ensure_voice(interaction)
-        if not vc:
-            return
-
         try:
-            track = await asyncio.to_thread(_extract_track, busca, interaction.user.display_name)
+            vc = await self._ensure_voice(interaction)
+            if not vc:
+                return
+
+            track = await asyncio.wait_for(
+                asyncio.to_thread(_extract_track, busca, interaction.user.display_name),
+                timeout=20.0,
+            )
+
+            state = self._get_state(interaction.guild_id)
+            state.queue.append(track)
+
+            if not vc.is_playing() and not vc.is_paused():
+                await self._play_next(interaction.guild, interaction.channel)
+                await interaction.followup.send(f"🎶 Tocando agora: **{track.title}**")
+            else:
+                await interaction.followup.send(f"📜 Adicionado à fila: **{track.title}**")
         except Exception as e:
-            await interaction.followup.send(f"❌ Não foi possível carregar o áudio: `{e}`", ephemeral=True)
-            return
-
-        state = self._get_state(interaction.guild_id)
-        state.queue.append(track)
-
-        if not vc.is_playing() and not vc.is_paused():
-            await self._play_next(interaction.guild, interaction.channel)
-            await interaction.followup.send(f"🎶 Tocando agora: **{track.title}**")
-        else:
-            await interaction.followup.send(f"📜 Adicionado à fila: **{track.title}**")
+            await interaction.followup.send(f"❌ Não foi possível tocar o áudio: `{e}`", ephemeral=True)
 
     @app_commands.command(name="ambiente", description="Inicia uma ambientação medieval/gregoriana em loop contínuo.")
     @app_commands.choices(
@@ -237,26 +241,28 @@ class Music(commands.Cog):
         if not await self._check_music_channel(interaction):
             return
         await interaction.response.defer(thinking=True)
-        vc = await self._ensure_voice(interaction)
-        if not vc:
-            return
-
-        query = AMBIENCE_PRESETS[preset.value]
         try:
-            track = await asyncio.to_thread(_extract_track, query, interaction.user.display_name)
+            vc = await self._ensure_voice(interaction)
+            if not vc:
+                return
+
+            query = AMBIENCE_PRESETS[preset.value]
+            track = await asyncio.wait_for(
+                asyncio.to_thread(_extract_track, query, interaction.user.display_name),
+                timeout=20.0,
+            )
+
+            state = self._get_state(interaction.guild_id)
+            state.queue.clear()
+            state.current = None
+            state.loop = True
+            if vc.is_playing() or vc.is_paused():
+                vc.stop()
+            state.queue.append(track)
+            await self._play_next(interaction.guild, interaction.channel)
+            await interaction.followup.send(f"🕯️ Ambientação **{preset.name}** iniciada em modo loop: **{track.title}**")
         except Exception as e:
             await interaction.followup.send(f"❌ Erro ao iniciar ambientação: `{e}`", ephemeral=True)
-            return
-
-        state = self._get_state(interaction.guild_id)
-        state.queue.clear()
-        state.current = None
-        state.loop = True
-        if vc.is_playing() or vc.is_paused():
-            vc.stop()
-        state.queue.append(track)
-        await self._play_next(interaction.guild, interaction.channel)
-        await interaction.followup.send(f"🕯️ Ambientação **{preset.name}** iniciada em modo loop: **{track.title}**")
 
     @app_commands.command(name="pause", description="Pausa a reprodução atual.")
     async def pause(self, interaction: discord.Interaction):
