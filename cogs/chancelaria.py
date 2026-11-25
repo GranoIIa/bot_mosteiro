@@ -4,7 +4,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 from database.connection import db
-from utils.permissions import AdminGroup
+from utils.permissions import AdminGroup, is_ctx_admin_or_owner
 
 
 class Chancelaria(commands.Cog):
@@ -201,6 +201,33 @@ class Chancelaria(commands.Cog):
     @scheduled_loop.before_loop
     async def before_scheduled_loop(self):
         await self.bot.wait_until_ready()
+
+    @commands.command(name="clear", aliases=["limpar"])
+    @is_ctx_admin_or_owner()
+    async def clear_messages(self, ctx: commands.Context, quantidade: int = 0):
+        """Apaga N mensagens recentes do canal atual (ex: !clear 10)."""
+        if quantidade < 1 or quantidade > 100:
+            await ctx.send("❌ Informe uma quantidade entre **1** e **100** (ex: `!clear 10`).", delete_after=5)
+            return
+
+        try:
+            try:
+                await ctx.message.delete()
+            except discord.HTTPException:
+                pass
+            deleted = await ctx.channel.purge(limit=quantidade)
+            await ctx.send(f"🧹 **{len(deleted)}** mensagem(ns) apagada(s).", delete_after=4)
+        except discord.Forbidden:
+            await ctx.send("❌ Não tenho permissão de **Gerenciar Mensagens** neste canal.", delete_after=5)
+        except discord.HTTPException as e:
+            await ctx.send(f"❌ Erro ao apagar mensagens: `{e}`", delete_after=5)
+
+    @clear_messages.error
+    async def clear_messages_error(self, ctx: commands.Context, error: commands.CommandError):
+        if isinstance(error, commands.MissingPermissions):
+            await ctx.send("❌ Você precisa da permissão **Gerenciar Mensagens** para usar `!clear`.", delete_after=5)
+        elif isinstance(error, commands.BadArgument):
+            await ctx.send("❌ Uso correto: `!clear <número>` (ex: `!clear 10`).", delete_after=5)
 
 
 async def setup(bot: commands.Bot):
